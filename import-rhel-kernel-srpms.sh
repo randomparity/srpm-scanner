@@ -199,15 +199,20 @@ prep_srpm(){
     log error "rpmbuild -bp failed for $nvr (see $plog)"; return 1
   fi
 
-  local src
-  src="$(find "$top/BUILD" -maxdepth 5 -type f -name Makefile -printf '%h\n' | grep '/linux-' | sort -u | tail -1 || true)"
-  [[ -n "$src" && -d "$src" ]] || src="$(find "$top/BUILD" -maxdepth 5 -type d -name 'linux-*' | sort -u | tail -1 || true)"
+  # Find the kernel source root (linux-* directory with Kconfig at top level)
+  local src=""
+  while IFS= read -r d; do
+    [[ -f "$d/Kconfig" && -f "$d/Makefile" ]] && { src="$d"; break; }
+  done < <(find "$top/BUILD" -maxdepth 3 -type d -name 'linux-*' | sort -V)
   if [[ -z "$src" || ! -d "$src" ]]; then
     dbg_prep "$top/TMP" "$plog" "$nvr"; dbg_tree "$top/BUILD" "$plog"
     log error "Prepared tree not found under $top/BUILD (see $plog)"; return 1
   fi
 
-  if [[ -n "$CONFIG_ARCHES" ]]; then export_configs "$src" "$nvr" || true; fi
+  if [[ -n "$CONFIG_ARCHES" ]]; then
+    log info "Exporting configs for: $nvr"
+    export_configs "$src" "$nvr" || true
+  fi
   echo "$src"
 }
 
@@ -217,6 +222,9 @@ export_configs(){
   local candidates=()
   if [[ -d "$src/configs" ]]; then
     while IFS= read -r -d '' f; do candidates+=("$f"); done < <(find "$src/configs" -type f -name '*.config' -print0)
+    log info "  Found ${#candidates[@]} config files in $src/configs"
+  else
+    log warn "  No configs directory at $src/configs"
   fi
   [[ -f "$src/.config" ]] && candidates+=("$src/.config")
 
@@ -228,12 +236,21 @@ export_configs(){
     for a in $CONFIG_ARCHES; do
       local karch seed=""; karch="$(karch_for "$a")"
       for f in "${candidates[@]}"; do if cfg_match "$f" "$a"; then seed="$f"; break; fi; done
+      if [[ -n "$seed" ]]; then
+        log info "  Generating config for arch: $a (seed: $(basename "$seed"))"
+      else
+        log info "  Generating config for arch: $a (no seed found)"
+      fi
       pushd "$src" >/dev/null
-        make mrproper >/dev/null 2>&1 || true
+        # Clean only .config, not the whole tree (mrproper removes Makefile!)
+        rm -f .config .config.old
         [[ -n "$seed" ]] && cp -f "$seed" .config
-        if make ARCH="$karch" olddefconfig >/dev/null 2>/dev/null; then
+        local cfg_log="$WORKDIR/logs/${nvr}.config.${a}.log"
+        if make ARCH="$karch" olddefconfig >"$cfg_log" 2>&1; then
           mkdir -p "$outbase/$a"
           cp -f .config "$outbase/$a/${nvr}.${a}.resolved.config"
+        else
+          log warn "  Failed to generate config for $a (see ${cfg_log})"
         fi
       popd >/dev/null
     done
@@ -273,6 +290,8 @@ commit_one(){
   local nvr="$1" tree="$2" srpm="$3" imported_tsv="$4"
   local tag; tag="$(tag_from_nvr "$nvr")"
   local branch; branch="$(branch_from_nvr "$nvr")"
+
+  log info "Committing: $nvr -> $tag"
 
   local be; be="$(bt_epoch "$srpm" 2>/dev/null || echo 0)"
   local bts; bts="$(date -u -d "@$be" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || ts)"

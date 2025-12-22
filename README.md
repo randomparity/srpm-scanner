@@ -84,6 +84,7 @@ If running manually inside a Rocky Linux container with rpm-build tools:
 |----------|---------|-------------|
 | `CACHE` | `$HOME/.cache/rhel-kernel-srpms` | Host SRPM cache directory (container script) |
 | `CONTAINER_ENGINE` | auto-detect | Force `podman` or `docker` |
+| `REBUILD` | `0` | Set to `1` to force container image rebuild (no cache) |
 | `MAJORS` | `9 10` | RHEL major versions to import |
 | `MODE` | `prep` | `prep` = full source tree; `sources` = raw SRPM contents |
 | `ARCH` | `x86_64` | Target architecture for rpmbuild |

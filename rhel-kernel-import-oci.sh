@@ -17,8 +17,14 @@ if [[ -z "$OCI" ]]; then
 fi
 
 # Build images (context: this directory with Dockerfiles + importer script)
-$OCI build -f Dockerfile.rocky9  -t rhel-kernel-import:rocky9 .
-$OCI build -f Dockerfile.rocky10 -t rhel-kernel-import:rocky10 .
+# Script hash invalidates cache only when script changes (not base layers)
+# Use REBUILD=1 to force complete rebuild (no cache at all)
+SCRIPT_HASH="$(sha256sum import-rhel-kernel-srpms.sh | cut -c1-12)"
+BUILD_ARGS=(--build-arg "SCRIPT_HASH=$SCRIPT_HASH")
+[[ "${REBUILD:-0}" == "1" ]] && BUILD_ARGS+=(--no-cache)
+
+$OCI build "${BUILD_ARGS[@]}" -f Dockerfile.rocky9  -t rhel-kernel-import:rocky9 .
+$OCI build "${BUILD_ARGS[@]}" -f Dockerfile.rocky10 -t rhel-kernel-import:rocky10 .
 
 # Ensure work dirs exist on host (prevents root-owned parents from the nested mount)
 mkdir -p "$REPO/.work"/{srpms,tmp,logs}
@@ -51,6 +57,8 @@ run_one () {
   local tag="$1" major="$2"
   echo "[INFO] Importing RHEL $major kernel stream via $tag …"
   "$OCI" run --rm \
+    --init \
+    -it \
     "${RUN_ARGS[@]}" \
     -e MAJORS="$major" \
     -e MODE="${MODE:-prep}" \
@@ -59,6 +67,9 @@ run_one () {
     "rhel-kernel-import:${tag}" \
     import-rhel-kernel-srpms.sh /work
 }
+
+# Handle CTRL-C gracefully
+trap 'echo; echo "[INFO] Interrupted - cleaning up..."; exit 130' INT TERM
 
 run_one rocky9  9
 run_one rocky10 10
