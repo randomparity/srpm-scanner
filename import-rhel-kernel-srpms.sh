@@ -379,7 +379,7 @@ generate_index(){
         local i=0
         for a in $CONFIG_ARCHES; do
           [[ $i -gt 0 ]] && printf ","
-          printf '"%s":"%s/%s/%s/"' "$a" "$CONFIG_EXPOR T_DIR" "$a" "$t" | sed 's/ //g'
+          printf '"%s":"%s/%s/%s/"' "$a" "$CONFIG_EXPORT_DIR" "$a" "$t"
           i=$((i+1))
         done
         printf "}"
