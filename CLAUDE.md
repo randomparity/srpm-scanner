@@ -29,6 +29,17 @@ This builds Rocky 9 and Rocky 10 container images, then runs the import for both
 
 Runs inside the container. Requires rpm-build tools and Rocky Linux environment.
 
+### Linting
+
+There is no test suite — the project is Bash plus two Dockerfiles. Before committing changes to the scripts:
+
+```bash
+shellcheck import-rhel-kernel-srpms.sh rhel-kernel-import-oci.sh
+shfmt -i 2 -d import-rhel-kernel-srpms.sh rhel-kernel-import-oci.sh
+```
+
+`rhel-kernel-import-oci.sh` rebuilds the images on every run. It passes a `SCRIPT_HASH` build-arg so the image cache only invalidates when `import-rhel-kernel-srpms.sh` changes; Dockerfile edits invalidate normally. Use `REBUILD=1` to force a full no-cache rebuild.
+
 ## Key Environment Variables
 
 | Variable | Default | Description |
@@ -66,3 +77,21 @@ Runs inside the container. Requires rpm-build tools and Rocky Linux environment.
 ├── logs/           # Per-SRPM install/prep logs
 └── config-export/  # Temporary Kconfig staging
 ```
+
+## Key Design Decisions
+
+These are non-obvious and easy to break:
+
+- **`rpmbuild` runs with `--nodeps`** (both `rpm -Uvh` and `rpmbuild -bp`). Spec `BuildRequires` are *not* resolved — every tool the kernel `%prep` needs must be baked into the Dockerfiles. A missing build dependency does not fail up front; it fails deep inside `%prep` with a confusing error. Recent EL kernel specs convert secure-boot certs in `%prep` (`openssl x509 -in /usr/share/pki/sb-certs/*.der`), which is why the images install `rocky-sb-certs` from the `crb` repo. When a new kernel release starts failing `%prep`, suspect a newly-required build dependency.
+- **Idempotent and resumable.** A version is imported only if its tag does not already exist; existing tags are skipped at discovery and again before commit. A failed `%prep` is logged and skipped (not fatal) so one bad SRPM never halts the run. Re-running the import retries everything that lacks a tag.
+- **Commits are back-dated to SRPM build time.** `commit_one()` sets `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` from the SRPM's `%{BUILDTIME}`, so `git log` on a `rhel*` branch is ordered by actual build chronology, not import time.
+- **Per-stream orphan branches.** Each `rhel<major>` branch is an orphan line of history. `commit_one()` wipes the worktree, rsyncs the freshly prepped source tree in, and makes one commit + annotated tag per version.
+- **Spec compatibility shims.** `sanitize_spec_builtins()` rewrites EL9-era macros (`rpmversion`/`rpmrelease`) that collide with newer rpmbuild built-ins, and the import passes custom `--define`s (`uname_variant`, `uname_suffix`, `py3_shebang_fix`) so older specs prep cleanly on a current toolchain.
+- **Config export avoids `mrproper`.** `export_configs()` seeds `.config` and runs `make olddefconfig` per arch, deleting only `.config`/`.config.old` — `mrproper` would remove the `Makefile` and break the tree.
+
+## Debugging Failed Imports
+
+- Per-SRPM logs live in `.work/logs/<nvr>.{install.log,bp.log,diag.txt}`. **`<nvr>.bp.log` is the `rpmbuild -bp` output** — the first place to look for a `%prep` failure (the actual error is at the tail).
+- `.work/` is git-ignored *and* in `.git/info/exclude`, so `fd` and `rg` skip it by default. Pass `-I` / `--no-ignore` to search inside it.
+- `DEBUG=1` enables `set -x`, `rpmbuild -vv`, and dumps the generated `%prep` script and BUILD tree into the logs.
+- On a failed prep the `.work/tmp/rpmbuild-<nvr>/` workdir is *not* pruned (pruning only happens after a successful commit), so the expanded spec and sources remain available for inspection.
