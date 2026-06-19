@@ -3,6 +3,32 @@
 # Usage: ./rhel-kernel-import-oci.sh /absolute/path/to/repo
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: rhel-kernel-import-oci.sh /absolute/path/to/repo
+
+Build Rocky Linux importer images and run the kernel SRPM import for RHEL 9
+and RHEL 10.
+
+Arguments:
+  /absolute/path/to/repo  Target repository path.
+
+Environment:
+  CONTAINER_ENGINE  Force "podman" or "docker". Defaults to auto-detect.
+  CACHE             Host SRPM cache. Defaults to $HOME/.cache/rhel-kernel-srpms.
+  REBUILD           Set to "1" to rebuild images without cache.
+  MODE              Import mode passed to the container. Defaults to "prep".
+
+Options:
+  -h, --help  Show this help and exit.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
 REPO="${1:-}"
 [[ -z "$REPO" ]] && { echo "Usage: $0 /abs/path/to/repo"; exit 1; }
 REPO="$(readlink -f "$REPO" 2>/dev/null || realpath "$REPO")"
