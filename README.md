@@ -76,13 +76,16 @@ If running manually inside a Rocky Linux container with rpm-build tools:
 
 ```bash
 ./import-rhel-kernel-srpms.sh /path/to/repo
+
+# Reuse an existing SRPM cache when running directly
+CACHE=$HOME/.cache/rhel-kernel-srpms ./import-rhel-kernel-srpms.sh /path/to/repo
 ```
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CACHE` | `$HOME/.cache/rhel-kernel-srpms` | Host SRPM cache directory (container script) |
+| `CACHE` | `$HOME/.cache/rhel-kernel-srpms` | SRPM cache directory |
 | `CONTAINER_ENGINE` | auto-detect | Force `podman` or `docker` |
 | `REBUILD` | `0` | Set to `1` to force container image rebuild (no cache) |
 | `MAJORS` | `9 10` | RHEL major versions to import |
