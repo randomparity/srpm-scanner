@@ -18,6 +18,7 @@ Environment:
   MAJORS           RHEL major versions to import. Defaults to "9 10".
   MODE             Import mode: "prep" or "sources". Defaults to "prep".
   ARCH             rpmbuild target architecture. Defaults to "x86_64".
+  CACHE            SRPM cache directory. Defaults to $HOME/.cache/rhel-kernel-srpms.
   DEBUG            Set to "1" for shell tracing and extra rpmbuild logs.
   KEEP_SRPMS       Set to "0" to delete SRPMs after successful import.
   CONFIG_ARCHES    Architectures for Kconfig export.
@@ -37,6 +38,13 @@ fi
 REPO_DIR="${1:-/work}"; REPO_DIR="$(cd "$REPO_DIR" 2>/dev/null && pwd -P)" || { echo "Repo dir '$REPO_DIR' not accessible" >&2; exit 1; }
 MAJORS="${ARGV_MAJORS:-${MAJORS:-9 10}}"
 WORKDIR="${WORKDIR:-$REPO_DIR/.work}"               # scratch: srpms/tmp/logs
+if [[ -n "${CACHE:-}" ]]; then
+  SRPM_DIR="$CACHE"
+elif [[ -n "${HOME:-}" ]]; then
+  SRPM_DIR="$HOME/.cache/rhel-kernel-srpms"
+else
+  SRPM_DIR="$WORKDIR/srpms"
+fi
 MODE="${MODE:-prep}"                                # "prep" or "sources"
 ARCH="${ARCH:-x86_64}"                              # rpmbuild --target; used for Kconfig too
 KEEP_SRPMS="${KEEP_SRPMS:-1}"                       # 0 => delete SRPM after success
@@ -78,8 +86,27 @@ log(){ local L="$1"; shift; [ "$(lvl "$L")" -ge "$LOGN" ] && printf '[%s] %-5s %
 if [[ "$DEBUG" == "1" ]]; then set -x; fi
 
 # Guard: prevent legacy rpm helpers from writing into repo root
-mkdir -p "$WORKDIR"/{srpms,tmp,logs}
+mkdir -p "$SRPM_DIR" "$WORKDIR"/{tmp,logs}
 SAFE_HOME="$WORKDIR/.home"; mkdir -p "$SAFE_HOME"; export HOME="$SAFE_HOME"
+
+ensure_pathfix_helper() {
+  command -v pathfix.py >/dev/null 2>&1 && return 0
+
+  local helper="/usr/lib/rpm/redhat/pathfix.py"
+  [[ -f "$helper" ]] || return 0
+
+  local bindir="$WORKDIR/bin"
+  mkdir -p "$bindir"
+  cat > "$bindir/pathfix.py" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$helper" "\$@"
+EOF
+  chmod +x "$bindir/pathfix.py"
+  export PATH="$bindir:$PATH"
+}
+
+ensure_pathfix_helper
 
 ########## GIT INIT & IGNORE ##########
 cd "$REPO_DIR"
@@ -87,7 +114,7 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git init -q -b "$INIT_BRANCH"
 else
   if git show-ref --quiet refs/heads/master && ! git show-ref --quiet "refs/heads/$INIT_BRANCH"; then
-    ch="$(git symbolic-ref --short HEAD || true)"
+    ch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
     [[ "$ch" == "master" ]] && git branch -m master "$INIT_BRANCH" || true
   fi
 fi
@@ -174,6 +201,18 @@ sanitize_spec_builtins(){
   done
 }
 
+disable_missing_signing_certs(){
+  local spec="$1" dlog="$2"
+  grep -qF '/pki/sb-certs/' "$spec" || return 0
+  [[ -d /usr/share/pki/sb-certs ]] && return 0
+
+  cp -f "$spec" "${spec}.orig.signing-certs" || true
+  sed -i -E \
+    's/^(%(global|define)[[:space:]]+(rhelkeys|signkernel|signmodules)[[:space:]]+)[0-9]+/\10/' \
+    "$spec"
+  echo "--- disabled kernel signing cert prep macros; /usr/share/pki/sb-certs missing" >> "$dlog"
+}
+
 dbg_hdr(){ [[ "$DEBUG" != "1" ]] && return 0; { echo "--- env ---"; uname -a; cat /etc/os-release; echo; echo "--- rpm/rpmbuild ---"; rpm --version; rpmbuild --version; echo; echo "--- rpm --showrc (head) ---"; rpm --showrc | sed -n '1,160p'; } >> "$1"; }
 dbg_mac(){ [[ "$DEBUG" != "1" ]] && return 0; { echo; echo "--- macro eval ---"; rpmbuild --eval '%{?rhel} %{?fedora} %{_topdir} %{_sourcedir} %{_specdir} %{_tmppath}'; } >> "$1"; }
 dbg_prep(){
@@ -234,6 +273,7 @@ prep_srpm(){
 
   dbg_mac "$dlog"
   sanitize_spec_builtins "$spec" "$dlog"
+  disable_missing_signing_certs "$spec" "$dlog"
 
   local rel="${nvr#kernel-}"; rel="${rel#*-}"; local el; el="$(el_from_rel "$rel")"; [[ -z "$el" ]] && el="9"
   local defs=(
@@ -524,16 +564,16 @@ ALREADY=$(( DISCOVERED - TODO_CNT ))
 DL=0; CACHED=0
 while IFS= read -r u; do
   [[ -z "$u" ]] && continue
-  f="$WORKDIR/srpms/$(basename "$u")"
+  f="$SRPM_DIR/$(basename "$u")"
   if [[ -s "$f" ]]; then CACHED=$((CACHED+1)); else DL=$((DL+1)); fi
 done < "$TODO"
 
 log info "Summary: discovered ${DISCOVERED}, already tagged ${ALREADY}, to import ${TODO_CNT} (cached ${CACHED}, to download ${DL})"
 
-mkdir -p "$WORKDIR/srpms"
+mkdir -p "$SRPM_DIR"
 while IFS= read -r u; do
   [[ -z "$u" ]] && continue
-  f="$WORKDIR/srpms/$(basename "$u")"
+  f="$SRPM_DIR/$(basename "$u")"
   if [[ ! -s "$f" ]]; then
     log info "Downloading: $(basename "$u")"
     curl -fL --retry 3 -o "$f.part" "$u" && mv "$f.part" "$f"
@@ -547,7 +587,7 @@ while IFS= read -r f; do
   rel="${nvr#kernel-}"; rel="${rel#*-}"; el="$(el_from_rel "$rel")"; [[ -z "$el" ]] && el="9"
   bt="$(bt_epoch "$f" 2>/dev/null || echo 0)"
   printf "%s\t%010d\t%s\t%s\n" "$el" "$bt" "$nvr" "$f" >> "$PLAN"
-done < <(find "$WORKDIR/srpms" -maxdepth 1 -type f -name 'kernel-*.src.rpm' | sort)
+done < <(find "$SRPM_DIR" -maxdepth 1 -type f -name 'kernel-*.src.rpm' | sort)
 
 sort -t$'\t' -k1,1n -k2,2n -o "$PLAN" "$PLAN"
 

@@ -88,6 +88,7 @@ run_one () {
     "${RUN_ARGS[@]}" \
     -e MAJORS="$major" \
     -e MODE="${MODE:-prep}" \
+    -e CACHE=/work/.work/srpms \
     -v "$V_REPO" \
     -v "$V_CACHE" \
     "rhel-kernel-import:${tag}" \
