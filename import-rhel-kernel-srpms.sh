@@ -5,6 +5,34 @@
 
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: import-rhel-kernel-srpms.sh [REPO_DIR]
+
+Mirror Rocky Linux kernel SRPMs into a tagged Git repository.
+
+Arguments:
+  REPO_DIR  Target repository path. Defaults to /work.
+
+Environment:
+  MAJORS           RHEL major versions to import. Defaults to "9 10".
+  MODE             Import mode: "prep" or "sources". Defaults to "prep".
+  ARCH             rpmbuild target architecture. Defaults to "x86_64".
+  DEBUG            Set to "1" for shell tracing and extra rpmbuild logs.
+  KEEP_SRPMS       Set to "0" to delete SRPMs after successful import.
+  CONFIG_ARCHES    Architectures for Kconfig export.
+  CONFIG_GENERATE  Set to "0" to skip generated configs.
+
+Options:
+  -h, --help  Show this help and exit.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
 ########## CONFIG (env) ##########
 REPO_DIR="${1:-/work}"; REPO_DIR="$(cd "$REPO_DIR" 2>/dev/null && pwd -P)" || { echo "Repo dir '$REPO_DIR' not accessible" >&2; exit 1; }
 MAJORS="${ARGV_MAJORS:-${MAJORS:-9 10}}"
@@ -148,8 +176,36 @@ sanitize_spec_builtins(){
 
 dbg_hdr(){ [[ "$DEBUG" != "1" ]] && return 0; { echo "--- env ---"; uname -a; cat /etc/os-release; echo; echo "--- rpm/rpmbuild ---"; rpm --version; rpmbuild --version; echo; echo "--- rpm --showrc (head) ---"; rpm --showrc | sed -n '1,160p'; } >> "$1"; }
 dbg_mac(){ [[ "$DEBUG" != "1" ]] && return 0; { echo; echo "--- macro eval ---"; rpmbuild --eval '%{?rhel} %{?fedora} %{_topdir} %{_sourcedir} %{_specdir} %{_tmppath}'; } >> "$1"; }
-dbg_prep(){ [[ "$DEBUG" != "1" ]] && return 0; local tmp="$1" logf="$2" nvr="$3"; local t; t="$(ls -1t "$tmp"/rpm-tmp.* 2>/dev/null | head -1 || true)"; if [[ -f "$t" ]]; then cp -f "$t" "$WORKDIR/logs/${nvr}.prep.sh"; { echo; echo "--- %prep head ---"; sed -n '1,120p' "$t"; echo; echo "--- %prep tail ---"; tail -n 120 "$t"; } >> "$2"; fi; }
-dbg_tree(){ [[ "$DEBUG" != "1" ]] && return 0; local b="$1" logf="$2"; { echo; echo "--- BUILD tree (first 200 dirs) ---"; find "$b" -maxdepth 5 -type d -print | sed -n '1,200p'; } >> "$2"; }
+dbg_prep(){
+  [[ "$DEBUG" != "1" ]] && return 0
+  local tmp="$1" logf="$2" nvr="$3"
+  local t
+  t="$(
+    find "$tmp" -maxdepth 1 -type f -name 'rpm-tmp.*' -printf '%T@ %p\n' 2>/dev/null |
+      sort -nr |
+      sed -n '1{s/^[^ ]* //;p;}'
+  )"
+  if [[ -f "$t" ]]; then
+    cp -f "$t" "$WORKDIR/logs/${nvr}.prep.sh"
+    {
+      echo
+      echo "--- %prep head ---"
+      sed -n '1,120p' "$t"
+      echo
+      echo "--- %prep tail ---"
+      tail -n 120 "$t"
+    } >> "$logf"
+  fi
+}
+dbg_tree(){
+  [[ "$DEBUG" != "1" ]] && return 0
+  local b="$1" logf="$2"
+  {
+    echo
+    echo "--- BUILD tree (first 200 dirs) ---"
+    find "$b" -maxdepth 5 -type d -print | sed -n '1,200p'
+  } >> "$logf"
+}
 
 ########## %prep: expand SRPM ##########
 prep_srpm(){
@@ -305,7 +361,8 @@ commit_one(){
     git switch -q --orphan "$branch"
   fi
 
-  local keep="$(basename "$WORKDIR")"
+  local keep
+  keep="$(basename "$WORKDIR")"
   git ls-files -z | xargs -0r git rm -f --quiet || true
   find . -mindepth 1 -maxdepth 1 ! -name ".git" ! -name ".gitignore" ! -name "$keep" -exec rm -rf {} + || true
 
