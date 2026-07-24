@@ -103,7 +103,7 @@ CACHE=$HOME/.cache/rhel-kernel-srpms ./import-rhel-kernel-srpms.sh /path/to/repo
 3. **Prep** — Runs `rpm -Uvh` + `rpmbuild -bp` to expand source trees
 4. **Config Export** — Optionally extracts per-arch Kconfig files to `metadata/configs/`
 5. **Commit** — Creates orphan branch commit + annotated tag per version
-6. **Index** — Updates `main` branch with CHANGELOG.md and index.json
+6. **Docs** — Regenerates `main` branch CHANGELOG.md and index.json
 
 ## Directory Layout (Runtime)
 
