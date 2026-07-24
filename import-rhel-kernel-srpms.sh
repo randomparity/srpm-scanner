@@ -25,13 +25,20 @@ Environment:
   CONFIG_GENERATE  Set to "0" to skip generated configs.
 
 Options:
-  -h, --help  Show this help and exit.
+  --refresh-main  Regenerate README.md, CHANGELOG.md, and index.json only.
+  -h, --help      Show this help and exit.
 EOF
 }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   usage
   exit 0
+fi
+
+REFRESH_MAIN=0
+if [[ "${1:-}" == "--refresh-main" ]]; then
+  REFRESH_MAIN=1
+  shift
 fi
 
 ########## CONFIG (env) ##########
@@ -176,6 +183,8 @@ el_from_rel(){ sed -nE 's/.*\.el([0-9]+)(_.*)?/\1/p' <<<"$1"; }
 tag_from_nvr(){ local nvr="$1"; local v="${nvr#kernel-}"; local r="${v#*-}"; echo "rhel$(el_from_rel "$r")-$v"; }
 branch_from_nvr(){ local nvr="$1"; local v="${nvr#kernel-}"; local r="${v#*-}"; echo "rhel$(el_from_rel "$r")"; }
 bt_epoch(){ rpm -qp --qf '%{BUILDTIME}\n' "$1"; }
+tag_major(){ sed -nE 's/^rhel([0-9]+)-.*/\1/p' <<<"$1"; }
+tag_version_release(){ sed -nE 's/^rhel[0-9]+-(.*)$/\1/p' <<<"$1"; }
 
 karch_for(){ case "$1" in x86_64) echo x86 ;; ppc64le) echo powerpc ;; s390x) echo s390 ;; aarch64) echo arm64 ;; *) echo "$1" ;; esac; }
 
@@ -455,6 +464,32 @@ commit_one(){
 }
 
 ########## main branch docs & index ##########
+tag_built_at(){ git -C "$REPO_DIR" show -s --format=%cI "$1^{}"; }
+tag_built_epoch(){ git -C "$REPO_DIR" show -s --format=%ct "$1^{}"; }
+tag_commit(){ git -C "$REPO_DIR" rev-parse "$1^{}"; }
+
+minor_from_tag(){
+  local tag="$1" major minor version_release
+  major="$(tag_major "$tag")"
+  version_release="$(tag_version_release "$tag")"
+  minor="$(sed -nE "s/.*\\.el${major}_([0-9]+).*/\\1/p" <<<"$version_release")"
+  printf '%s\n' "${minor:-0}"
+}
+
+sorted_tag_majors(){
+  git -C "$REPO_DIR" tag --list 'rhel*-*' |
+    sed -nE 's/^rhel([0-9]+)-.*/\1/p' |
+    sort -nu
+}
+
+config_index_dir(){
+  local dir="$CONFIG_EXPORT_DIR"
+  if [[ "$dir" == "$REPO_DIR/"* ]]; then
+    dir="${dir#"$REPO_DIR"/}"
+  fi
+  printf '%s\n' "$dir"
+}
+
 generate_index(){
   local out="$REPO_DIR/index.json"; : > "$out"
   {
@@ -463,20 +498,21 @@ generate_index(){
     while IFS= read -r t; do
       [[ -n "$t" ]] || continue
       local sha iso epoch ver el
-      sha="$(git -C "$REPO_DIR" rev-parse "$t")"
-      iso="$(git -C "$REPO_DIR" show -s --format=%cI "$t")"
-      epoch="$(git -C "$REPO_DIR" show -s --format=%ct "$t")"
-      ver="${t#rhel[0-9]-}"
-      el="$(sed -nE 's/^rhel([0-9]+)-.*/\1/p' <<<"$t")"
+      sha="$(tag_commit "$t")"
+      iso="$(tag_built_at "$t")"
+      epoch="$(tag_built_epoch "$t")"
+      ver="$(tag_version_release "$t")"
+      el="$(tag_major "$t")"
       [[ $first -eq 0 ]] && echo ","
       printf '  {"tag":"%s","nvr":"%s","branch":"rhel%s","built_at":"%s","built_epoch":%s,"commit":"%s"' \
         "$t" "kernel-$ver" "$el" "$iso" "$epoch" "$sha"
       if [[ -n "$CONFIG_ARCHES" ]]; then
         printf ',"configs":{'
-        local i=0
+        local config_dir i=0
+        config_dir="$(config_index_dir)"
         for a in $CONFIG_ARCHES; do
           [[ $i -gt 0 ]] && printf ","
-          printf '"%s":"%s/%s/%s/"' "$a" "$CONFIG_EXPORT_DIR" "$a" "$t"
+          printf '"%s":"%s/%s/%s/"' "$a" "$config_dir" "$a" "$t"
           i=$((i+1))
         done
         printf "}"
@@ -489,8 +525,46 @@ generate_index(){
   } >> "$out"
 }
 
+generate_changelog(){
+  local out="$REPO_DIR/CHANGELOG.md"; : > "$out"
+  {
+    echo "# Changelog"
+    echo
+    echo "Generated from Rocky Linux kernel SRPM imports."
+    echo
+    echo "Tag format: \`rhel<major>-<version-release>\`."
+    echo "NVR format: \`kernel-<version-release>\`."
+    while IFS= read -r major; do
+      [[ -n "$major" ]] || continue
+      echo
+      printf '## RHEL %s\n' "$major"
+      generate_changelog_major "$major"
+    done < <(sorted_tag_majors | sort -nr)
+  } >> "$out"
+}
+
+generate_changelog_major(){
+  local major="$1" current_minor="" tag
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] || continue
+    local minor version_release built_at commit
+    minor="$(minor_from_tag "$tag")"
+    version_release="$(tag_version_release "$tag")"
+    built_at="$(tag_built_at "$tag")"
+    commit="$(tag_commit "$tag")"
+    if [[ "$minor" != "$current_minor" ]]; then
+      current_minor="$minor"
+      echo
+      printf '### EL %s.%s\n' "$major" "$minor"
+      echo
+      echo "| Version-release | Built UTC | Commit |"
+      echo "|---|---:|---|"
+    fi
+    printf "| \`%s\` | \`%s\` | \`%s\` |\n" "$version_release" "$built_at" "${commit:0:8}"
+  done < <(git -C "$REPO_DIR" tag --list "rhel${major}-*" | sort -Vr)
+}
+
 update_main(){
-  local imported_tsv="$1"
   cd "$REPO_DIR"
   if git rev-parse --verify --quiet "refs/heads/$MAIN_BRANCH" >/dev/null 2>&1; then
     git switch -q "$MAIN_BRANCH"
@@ -503,7 +577,9 @@ update_main(){
   fi
 
   if [[ -f "$README_MD_SOURCE" ]]; then
-    cp -f "$README_MD_SOURCE" README.md
+    if [[ ! -f README.md ]] || [[ ! "$README_MD_SOURCE" -ef README.md ]]; then
+      cp -f "$README_MD_SOURCE" README.md
+    fi
   elif [[ ! -f README.md ]]; then
     cat > README.md <<'EOF'
 # RHEL Kernel Source Mirror (Rocky SRPMs → Git)
@@ -514,7 +590,7 @@ Branches:
 
 This `main` branch stays minimal:
 - README.md (this file)
-- CHANGELOG.md (one line per imported SRPM)
+- CHANGELOG.md (generated release timeline)
 - index.json (machine-readable list of all tags with metadata)
 
 If enabled, per-arch Kconfig snapshots live under:
@@ -522,15 +598,7 @@ If enabled, per-arch Kconfig snapshots live under:
 EOF
   fi
 
-  touch CHANGELOG.md
-  if [[ -s "$imported_tsv" ]]; then
-    while IFS=$'\t' read -r el bt nvr tag sha; do
-      grep -qF "$tag" CHANGELOG.md && continue
-      local iso; iso="$(date -u -d "@$bt" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || ts)"
-      printf "%s  –  [%s] %s  (build %s)  branch=rhel%s  commit=%s\n" "$(date -u +%Y-%m-%d)" "$tag" "$nvr" "$iso" "$el" "$sha" >> CHANGELOG.md
-    done < "$imported_tsv"
-  fi
-
+  generate_changelog
   generate_index
 
   [[ -f .gitignore ]] || printf "/.work/\n/redhat/\n/rpmbuild/\n" > .gitignore
@@ -542,6 +610,12 @@ EOF
   GIT_COMMITTER_EMAIL="$GIT_IMPORT_EMAIL" \
     git commit -m "docs(main): update changelog & index" >/dev/null || true
 }
+
+if [[ "$REFRESH_MAIN" == "1" ]]; then
+  update_main
+  log info "Refreshed main branch docs. Repository: $REPO_DIR"
+  exit 0
+fi
 
 ########## MAIN ##########
 URLS="$WORKDIR/kernel-srpms.txt"
@@ -603,6 +677,6 @@ while IFS=$'\t' read -r el bt nvr srpm; do
   [[ "$KEEP_SRPMS" == "1" ]] || rm -f -- "$srpm" || true
 done < "$PLAN"
 
-update_main "$IMPORTED"
+update_main
 
 log info "Done. Repository: $REPO_DIR"
