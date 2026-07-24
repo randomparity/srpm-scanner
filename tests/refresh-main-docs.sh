@@ -37,7 +37,8 @@ commit_import \
 	rhel10-6.12.0-211.34.1.el10_2 \
 	2026-07-01T00:00:00Z
 
-WORKDIR="$WORKDIR" CONFIG_ARCHES="x86_64" \
+CONFIG_DIR='metadata/configs"quoted'
+WORKDIR="$WORKDIR" CONFIG_ARCHES="x86_64" CONFIG_EXPORT_DIR="$CONFIG_DIR" \
 	"$ROOT_DIR/import-rhel-kernel-srpms.sh" --refresh-main "$REPO_DIR" >/dev/null
 
 if ! grep -q '^## RHEL 10$' "$REPO_DIR/CHANGELOG.md"; then
@@ -66,8 +67,8 @@ if ! grep -q '"nvr":"kernel-6.12.0-211.34.1.el10_2"' "$REPO_DIR/index.json"; the
 	exit 1
 fi
 
-expected_config_path='"x86_64":"metadata/configs/x86_64/rhel10-6.12.0-211.34.1.el10_2/"'
-if ! grep -q "$expected_config_path" "$REPO_DIR/index.json"; then
+expected_config_path='"x86_64":"metadata/configs\"quoted/x86_64/rhel10-6.12.0-211.34.1.el10_2/"'
+if ! grep -qF "$expected_config_path" "$REPO_DIR/index.json"; then
 	printf 'expected repo-relative config path in index.json\n' >&2
 	cat "$REPO_DIR/index.json" >&2
 	exit 1

@@ -185,6 +185,17 @@ branch_from_nvr(){ local nvr="$1"; local v="${nvr#kernel-}"; local r="${v#*-}"; 
 bt_epoch(){ rpm -qp --qf '%{BUILDTIME}\n' "$1"; }
 tag_major(){ sed -nE 's/^rhel([0-9]+)-.*/\1/p' <<<"$1"; }
 tag_version_release(){ sed -nE 's/^rhel[0-9]+-(.*)$/\1/p' <<<"$1"; }
+json_string(){
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\b'/\\b}"
+  value="${value//$'\f'/\\f}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '"%s"' "$value"
+}
 
 karch_for(){ case "$1" in x86_64) echo x86 ;; ppc64le) echo powerpc ;; s390x) echo s390 ;; aarch64) echo arm64 ;; *) echo "$1" ;; esac; }
 
@@ -504,15 +515,20 @@ generate_index(){
       ver="$(tag_version_release "$t")"
       el="$(tag_major "$t")"
       [[ $first -eq 0 ]] && echo ","
-      printf '  {"tag":"%s","nvr":"%s","branch":"rhel%s","built_at":"%s","built_epoch":%s,"commit":"%s"' \
-        "$t" "kernel-$ver" "$el" "$iso" "$epoch" "$sha"
+      printf '  {"tag":%s,"nvr":%s,"branch":%s,"built_at":%s,"built_epoch":%s,"commit":%s' \
+        "$(json_string "$t")" \
+        "$(json_string "kernel-$ver")" \
+        "$(json_string "rhel$el")" \
+        "$(json_string "$iso")" \
+        "$epoch" \
+        "$(json_string "$sha")"
       if [[ -n "$CONFIG_ARCHES" ]]; then
         printf ',"configs":{'
         local config_dir i=0
         config_dir="$(config_index_dir)"
         for a in $CONFIG_ARCHES; do
           [[ $i -gt 0 ]] && printf ","
-          printf '"%s":"%s/%s/%s/"' "$a" "$config_dir" "$a" "$t"
+          printf '%s:%s' "$(json_string "$a")" "$(json_string "$config_dir/$a/$t/")"
           i=$((i+1))
         done
         printf "}"
