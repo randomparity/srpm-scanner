@@ -356,9 +356,20 @@ prep_srpm() {
       log error "No .spec in SRPM (see $ilog)"
       return 1
     }
-    cp -f "$spec" "$top/SPECS/"
+    cp -f "$spec" "$top/SPECS/" || {
+      log error "Cannot stage extracted spec for $nvr; check permissions and free space (see $ilog)"
+      return 1
+    }
     spec="$top/SPECS/$(basename "$spec")"
     find "$ex" -mindepth 1 -maxdepth 1 ! -name '*.spec' -exec cp -a {} "$top/SOURCES/" \; || true
+  fi
+
+  if [[ "$MODE" == "prep" ]]; then
+    cp -f -- "$spec" "$top/kernel.spec" || {
+      log error "Cannot preserve original spec for $nvr at $top/kernel.spec;" \
+        "check permissions and free space"
+      return 1
+    }
   fi
 
   dbg_mac "$dlog"
@@ -530,6 +541,12 @@ commit_one() {
       --exclude='/.gitignore' \
       --exclude="/$keep" --exclude="/$keep/**" \
       "$tree/" "./"
+    if ! rm -rf -- ./kernel.spec ||
+      ! cp -f -- "$WORKDIR/tmp/rpmbuild-${nvr}/kernel.spec" ./kernel.spec; then
+      log error "Cannot include original kernel.spec for $nvr;" \
+        "check the preserved spec, permissions and free space"
+      return 1
+    fi
   else
     mkdir -p packaging/{SOURCES,SPECS}
     rsync -a "$WORKDIR/tmp/rpmbuild-${nvr}/SOURCES/" packaging/SOURCES/ || true
@@ -554,6 +571,9 @@ commit_one() {
   fi
 
   git add -A
+  if [[ "$MODE" == "prep" ]]; then
+    git add -f -- kernel.spec
+  fi
   GIT_AUTHOR_NAME="$GIT_IMPORT_NAME" \
     GIT_AUTHOR_EMAIL="$GIT_IMPORT_EMAIL" \
     GIT_COMMITTER_NAME="$GIT_IMPORT_NAME" \
