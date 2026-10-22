@@ -30,16 +30,24 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 REPO="${1:-}"
-[[ -z "$REPO" ]] && { echo "Usage: $0 /abs/path/to/repo"; exit 1; }
+[[ -z "$REPO" ]] && {
+  echo "Usage: $0 /abs/path/to/repo"
+  exit 1
+}
 REPO="$(readlink -f "$REPO" 2>/dev/null || realpath "$REPO")"
 mkdir -p "$REPO"
 
 # Choose podman or docker
 OCI="${CONTAINER_ENGINE:-}"
 if [[ -z "$OCI" ]]; then
-  if command -v podman >/dev/null 2>&1; then OCI=podman
-  elif command -v docker >/dev/null 2>&1; then OCI=docker
-  else echo "Need podman or docker"; exit 1; fi
+  if command -v podman >/dev/null 2>&1; then
+    OCI=podman
+  elif command -v docker >/dev/null 2>&1; then
+    OCI=docker
+  else
+    echo "Need podman or docker"
+    exit 1
+  fi
 fi
 
 # Build images (context: this directory with Dockerfiles + importer script)
@@ -49,7 +57,7 @@ SCRIPT_HASH="$(sha256sum import-rhel-kernel-srpms.sh | cut -c1-12)"
 BUILD_ARGS=(--build-arg "SCRIPT_HASH=$SCRIPT_HASH")
 [[ "${REBUILD:-0}" == "1" ]] && BUILD_ARGS+=(--no-cache)
 
-$OCI build "${BUILD_ARGS[@]}" -f Dockerfile.rocky9  -t rhel-kernel-import:rocky9 .
+$OCI build "${BUILD_ARGS[@]}" -f Dockerfile.rocky9 -t rhel-kernel-import:rocky9 .
 $OCI build "${BUILD_ARGS[@]}" -f Dockerfile.rocky10 -t rhel-kernel-import:rocky10 .
 
 # Ensure work dirs exist on host (prevents root-owned parents from the nested mount)
@@ -76,10 +84,10 @@ fi
 # Extra run args (keep host uid/gid inside container)
 RUN_ARGS=(-u "$(id -u):$(id -g)")
 if [[ "$OCI" == "podman" ]]; then
-  RUN_ARGS+=(--userns=keep-id)   # ensures file ownership maps cleanly on rootless podman
+  RUN_ARGS+=(--userns=keep-id) # ensures file ownership maps cleanly on rootless podman
 fi
 
-run_one () {
+run_one() {
   local tag="$1" major="$2"
   echo "[INFO] Importing RHEL $major kernel stream via $tag …"
   "$OCI" run --rm \
@@ -98,7 +106,7 @@ run_one () {
 # Handle CTRL-C gracefully
 trap 'echo; echo "[INFO] Interrupted - cleaning up..."; exit 130' INT TERM
 
-run_one rocky9  9
+run_one rocky9 9
 run_one rocky10 10
 
 echo "[INFO] Finished. Repo: $REPO"
