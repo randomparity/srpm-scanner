@@ -458,16 +458,17 @@ export_configs() {
         log info "  Generating config for arch: $a (no seed found)"
       fi
       pushd "$src" >/dev/null
-      # Clean only .config, not the whole tree (mrproper removes Makefile!)
-      rm -f .config .config.old
-      [[ -n "$seed" ]] && cp -f "$seed" .config
+      # Keep source configs intact: the snapshot copies this tree after export.
+      local cfg="$outbase/.${a}.config"
+      [[ -n "$seed" ]] && cp -f "$seed" "$cfg"
       local cfg_log="$WORKDIR/logs/${nvr}.config.${a}.log"
-      if make ARCH="$karch" olddefconfig >"$cfg_log" 2>&1; then
+      if KCONFIG_CONFIG="$cfg" make ARCH="$karch" olddefconfig >"$cfg_log" 2>&1; then
         mkdir -p "$outbase/$a"
-        cp -f .config "$outbase/$a/${nvr}.${a}.resolved.config"
+        cp -f "$cfg" "$outbase/$a/${nvr}.${a}.resolved.config"
       else
         log warn "  Failed to generate config for $a (see ${cfg_log})"
       fi
+      rm -f "$cfg" "$cfg.old"
       popd >/dev/null
     done
   fi

@@ -121,6 +121,13 @@ CACHE=$HOME/.cache/rhel-kernel-srpms ./import-rhel-kernel-srpms.sh /path/to/repo
 └── .git/
 ```
 
+Select architecture-specific configs from `metadata/configs/<arch>/<tag>/` in a
+source snapshot, or `<arch>/latest/` when enabled. Generated files end in
+`.resolved.config`; the other `.config` files are original seed inputs. Config
+export leaves any original root `.config` unchanged, so it does not identify the
+snapshot architecture. Temporary generation configs stay outside the source tree,
+including when generation fails. Existing imported tags are unchanged.
+
 ## Quick Usage
 
 ```bash
