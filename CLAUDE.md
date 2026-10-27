@@ -29,9 +29,22 @@ This builds Rocky 9 and Rocky 10 container images, then runs the import for both
 
 Runs inside the container. Requires rpm-build tools and Rocky Linux environment.
 
-### Linting
+### Testing and Linting
 
-There is no test suite — the project is Bash plus two Dockerfiles. Before committing changes to the scripts:
+Run the existing Bash regression tests from the repository root; the command stops at the first
+failing test:
+
+```bash
+bash -e -c 'for test in tests/*.sh; do bash "$test"; done'
+```
+
+The local fixture suite includes help checks (`tests/help-output.sh`), generated documentation
+and catalog refresh (`tests/refresh-main-docs.sh`), and config export through snapshot creation
+(`tests/config-export-snapshot.sh`). It uses real Git and rsync with fixture inputs and mocked
+RPM tools, make, and network responses. It does not validate container builds, live mirror
+access, real SRPM preparation, or kernel config generation with real toolchains.
+
+Before committing changes to the scripts, also run:
 
 ```bash
 shellcheck import-rhel-kernel-srpms.sh rhel-kernel-import-oci.sh
