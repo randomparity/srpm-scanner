@@ -12,7 +12,7 @@ chronological snapshots of the kernel source for semantic search, symbol lookup,
 - **Tags**
   - `rhel<major>-<version-release>` (e.g., `rhel9-5.14.0-570.52.1.el9_6`).
 - **Main branch (`main`)**
-  - Minimal docs: this **README.md**, **CHANGELOG.md**, and **index.json**.
+  - Minimal docs: **README.md**, generated **AGENTS.md**, **CHANGELOG.md**, and **index.json**.
   - No large source trees are committed on `main`.
 
 ## Running the Import
@@ -130,10 +130,42 @@ including when generation fails. Existing imported tags are unchanged.
 
 ## Quick Usage
 
-```bash
-# Browse latest history
-git switch rhel9  && git log --oneline -20
-git switch rhel10 && git log --oneline -20
+In a generated mirror, start with `AGENTS.md` for the exact-release
+consumer guide. It uses `index.json` to select the requested version-release,
+searches the tag, reads an architecture-specific config at that commit, and
+creates a detached sibling worktree. The guide is generated in the **output
+mirror**, not this scanner checkout.
 
-# Jump to an exact version
-git switch --detach rhel9-5.14.0-570.52.1.el9_6
+For example, from a mirror's documentation checkout:
+
+```bash
+# Select one exact catalog entry; report an absent release unavailable locally.
+jq -e --arg nvr 'kernel-5.14.0-570.52.1.el9_6' \
+  '.[] | select(.nvr == $nvr) | {tag, commit, configs}' index.json
+```
+
+Stream branch tips may be older backfills, so they do not identify the latest
+release. Resolve config paths against the selected tag/commit and architecture;
+root `.config` and `latest/` directories are not exact-release selectors. Cite
+tag, full commit, file path and relevant lines. These are Rocky-derived sources;
+that provenance does not establish exact Red Hat source equivalence.
+
+## Refreshing Generated Documentation
+
+Refresh an existing mirror without downloading or preparing SRPMs:
+
+```bash
+./import-rhel-kernel-srpms.sh --refresh-main /path/to/target/repo
+```
+
+Refresh regenerates `AGENTS.md`, `CHANGELOG.md`, and `index.json`. It copies
+`README_MD_SOURCE` when that file exists (default: the output mirror's own
+README), otherwise preserves the existing README, or creates a fallback README
+linking to the consumer guide. Supplied and existing READMEs retain their content.
+The generated guide is available independently of README customization.
+
+`MAIN_ENFORCE_MINIMAL=1` removes other top-level output files except `.git`,
+`.gitignore`, `README.md`, `AGENTS.md`, `CHANGELOG.md`, `index.json`, and the working
+directory basename. Use it only on an output mirror whose other files may be
+removed. The refresh commits generated documentation on `MAIN_BRANCH` (default
+`main`); tagged source/config snapshots are unchanged.
