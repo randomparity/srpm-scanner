@@ -87,7 +87,7 @@ These are non-obvious and easy to break:
 - **Commits are back-dated to SRPM build time.** `commit_one()` sets `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` from the SRPM's `%{BUILDTIME}`, so `git log` on a `rhel*` branch is ordered by actual build chronology, not import time.
 - **Per-stream orphan branches.** Each `rhel<major>` branch is an orphan line of history. `commit_one()` wipes the worktree, rsyncs the freshly prepped source tree in, and makes one commit + annotated tag per version.
 - **Spec compatibility shims.** `sanitize_spec_builtins()` rewrites EL9-era macros (`rpmversion`/`rpmrelease`) that collide with newer rpmbuild built-ins, and the import passes custom `--define`s (`uname_variant`, `uname_suffix`, `py3_shebang_fix`) so older specs prep cleanly on a current toolchain.
-- **Config export avoids `mrproper`.** `export_configs()` seeds `.config` and runs `make olddefconfig` per arch, deleting only `.config`/`.config.old` — `mrproper` would remove the `Makefile` and break the tree.
+- **Config export avoids `mrproper`.** `export_configs()` points `KCONFIG_CONFIG` at temporary export staging files and runs `make olddefconfig` per arch. It removes staging configs and their backups after each attempt, preserving original source `.config`/`.config.old` inputs for snapshots; `mrproper` would remove the `Makefile` and break the tree.
 
 ## Debugging Failed Imports
 
